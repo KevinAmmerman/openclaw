@@ -774,6 +774,54 @@ function collapseConsecutiveDuplicateBlocks(text: string): string {
   return result.join("\n\n");
 }
 
+const LEAKED_REASONING_PREFACE_START_RE =
+  /^(?:the user|user|they|this (?:user|request|question)|since this|given this|for a (?:quick|simple|factual))/i;
+const LEAKED_REASONING_PREFACE_META_RE =
+  /\b(?:the user|user is|i should|i need to|i can\b|i'll\b|i will\b|acknowledge|briefly|naturally|focused follow-?up|validation is appropriate|for the user|not for the user|what they want to do next|quick factual question|use-?case)\b/gi;
+
+function stripLeakedReasoningPreface(text: string): string {
+  if (!text || !text.includes("\n")) {
+    return text;
+  }
+  const normalized = text.replace(/\r\n/g, "\n");
+  const match = normalized.match(/^([\s\S]*?)\n\s*\n([\s\S]+)$/);
+  if (!match) {
+    return text;
+  }
+  const prefix = match[1].trim();
+  const rest = match[2].trimStart();
+  if (!prefix || !rest) {
+    return text;
+  }
+  if (prefix.length > 500 || prefix.split("\n").length > 6) {
+    return text;
+  }
+
+  let score = 0;
+  if (LEAKED_REASONING_PREFACE_START_RE.test(prefix)) {
+    score += 1;
+  }
+  const metaMatches = prefix.match(LEAKED_REASONING_PREFACE_META_RE);
+  if ((metaMatches?.length ?? 0) >= 3) {
+    score += 2;
+  } else if ((metaMatches?.length ?? 0) >= 2) {
+    score += 1;
+  }
+  if (
+    /\b(?:i should|i need to|i can\b|i'll\b|i will\b)\b/i.test(prefix) &&
+    /\b(?:the user|user|they|request|question)\b/i.test(prefix)
+  ) {
+    score += 1;
+  }
+  if ((prefix.match(/[.!?](?:\s|$)/g)?.length ?? 0) >= 2) {
+    score += 1;
+  }
+  if (score < 4) {
+    return text;
+  }
+  return rest;
+}
+
 function isLikelyHttpErrorText(raw: string): boolean {
   if (isCloudflareOrHtmlErrorPage(raw)) {
     return true;
@@ -956,7 +1004,8 @@ export function sanitizeUserFacingText(text: unknown, opts?: { errorContext?: bo
   }
   const errorContext = opts?.errorContext ?? false;
   const stripped = stripFinalTagsFromText(raw);
-  const trimmed = stripped.trim();
+  const withoutLeakedReasoning = errorContext ? stripped : stripLeakedReasoningPreface(stripped);
+  const trimmed = withoutLeakedReasoning.trim();
   if (!trimmed) {
     return "";
   }
@@ -1014,7 +1063,7 @@ export function sanitizeUserFacingText(text: unknown, opts?: { errorContext?: bo
 
   // Strip leading blank lines (including whitespace-only lines) without clobbering indentation on
   // the first content line (e.g. markdown/code blocks).
-  const withoutLeadingEmptyLines = stripped.replace(/^(?:[ \t]*\r?\n)+/, "");
+  const withoutLeadingEmptyLines = withoutLeakedReasoning.replace(/^(?:[ \t]*\r?\n)+/, "");
   return collapseConsecutiveDuplicateBlocks(withoutLeadingEmptyLines);
 }
 

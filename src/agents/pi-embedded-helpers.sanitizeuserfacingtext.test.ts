@@ -183,6 +183,19 @@ describe("sanitizeUserFacingText", () => {
     expect(sanitizeUserFacingText(undefined as unknown as string)).toBe("");
     expect(sanitizeUserFacingText(42 as unknown as string)).toBe("42");
   });
+
+  it("strips leaked internal reasoning prefaces when a real reply follows", () => {
+    const input =
+      "The user is expressing disappointment. I should acknowledge it briefly and naturally, then either wait for what they want to do next or ask a focused follow-up. Since this was a quick factual question, a brief validation is appropriate.\n\nJa, echt ärgerlich. 😕\n\nWar ein konkreter Use-Case, wo du das gebraucht hättest?";
+    expect(sanitizeUserFacingText(input)).toBe(
+      "Ja, echt ärgerlich. 😕\n\nWar ein konkreter Use-Case, wo du das gebraucht hättest?",
+    );
+  });
+
+  it("keeps short normal English text that is not leaked reasoning", () => {
+    const input = "The user is asking about rate limits.";
+    expect(sanitizeUserFacingText(input)).toBe(input);
+  });
 });
 
 describe("stripThoughtSignatures", () => {
