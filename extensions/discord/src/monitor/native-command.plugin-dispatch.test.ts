@@ -538,6 +538,67 @@ describe("Discord native plugin command dispatch", () => {
     );
   });
 
+  it("renders Discord interactive controls from plugin replies on the native slash path", async () => {
+    const cfg = createConfig();
+    const interaction = createInteraction();
+    const commandSpec: NativeCommandSpec = {
+      name: "limits",
+      description: "Limits",
+      acceptsArgs: false,
+    };
+    const pluginMatch = {
+      command: {
+        name: "limits",
+        description: "Limits",
+        pluginId: "demo-plugin",
+        acceptsArgs: false,
+        handler: vi.fn().mockResolvedValue({
+          text: "Limits overview",
+          interactive: {
+            blocks: [
+              {
+                type: "buttons",
+                buttons: [{ label: "Refresh", value: "limits:refresh", style: "primary" }],
+              },
+            ],
+          },
+        }),
+      },
+      args: undefined,
+    };
+
+    runtimeModuleMocks.matchPluginCommand.mockReturnValue(pluginMatch as never);
+    runtimeModuleMocks.executePluginCommand.mockResolvedValue({
+      text: "Limits overview",
+      interactive: {
+        blocks: [
+          {
+            type: "buttons",
+            buttons: [{ label: "Refresh", value: "limits:refresh", style: "primary" }],
+          },
+        ],
+      },
+    });
+    const dispatchSpy = runtimeModuleMocks.dispatchReplyWithDispatcher.mockResolvedValue(
+      {} as never,
+    );
+    const command = await createNativeCommand(cfg, commandSpec);
+
+    await (command as { run: (interaction: unknown) => Promise<void> }).run(interaction as unknown);
+
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "Limits overview",
+        components: expect.any(Array),
+      }),
+    );
+    const replyPayload = interaction.reply.mock.calls[0]?.[0] as {
+      components?: Array<{ components?: Array<{ label?: string }> }>;
+    };
+    expect(replyPayload.components?.length).toBeGreaterThan(0);
+  });
+
   it("forwards Discord thread metadata into direct plugin command execution", async () => {
     const cfg = {
       commands: {
