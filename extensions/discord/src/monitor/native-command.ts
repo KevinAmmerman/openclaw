@@ -314,6 +314,12 @@ function createDiscordAcpNativeCommand(params: {
   ephemeralDefault: boolean;
   threadBindings: ThreadBindingManager;
 }): CommandWithSubcommands {
+  const dispatchCommandDefinition: ChatCommandDefinition = {
+    ...params.commandDefinition,
+    args: undefined,
+    argsMenu: undefined,
+    argsParsing: "none",
+  };
   const dispatchAcpSubcommand = async (options: {
     interaction: CommandInteraction;
     prompt: string;
@@ -322,7 +328,7 @@ function createDiscordAcpNativeCommand(params: {
     await dispatchDiscordCommandInteraction({
       interaction: options.interaction,
       prompt: options.prompt,
-      command: params.commandDefinition,
+      command: dispatchCommandDefinition,
       cfg: params.cfg,
       discordConfig: params.discordConfig,
       accountId: params.accountId,
