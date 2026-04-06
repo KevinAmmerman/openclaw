@@ -2,6 +2,7 @@ import {
   Button,
   ChannelType,
   Command,
+  CommandWithSubcommands,
   StringSelectMenu,
   type TopLevelComponents,
   type AutocompleteInteraction,
@@ -279,6 +280,383 @@ function buildDiscordCommandOptions(params: {
       autocomplete,
     };
   }) satisfies CommandOptions;
+}
+
+type DiscordExecutableCommand = Command | CommandWithSubcommands;
+
+const ACP_PERMISSION_PROFILES = ["approve-all", "approve-reads", "deny-all"] as const;
+
+function appendPromptToken(parts: string[], value: string | undefined) {
+  const normalized = value?.trim();
+  if (normalized) {
+    parts.push(normalized);
+  }
+}
+
+function appendPromptFlag(parts: string[], flag: string, value: string | undefined) {
+  const normalized = value?.trim();
+  if (normalized) {
+    parts.push(flag, normalized);
+  }
+}
+
+function buildAcpPrompt(action: string, values?: string[]): string {
+  const parts = ["/acp", action, ...(values ?? [])].filter(Boolean);
+  return parts.join(" ");
+}
+
+function createDiscordAcpNativeCommand(params: {
+  commandDefinition: ChatCommandDefinition;
+  cfg: ReturnType<typeof loadConfig>;
+  discordConfig: DiscordConfig;
+  accountId: string;
+  sessionPrefix: string;
+  ephemeralDefault: boolean;
+  threadBindings: ThreadBindingManager;
+}): CommandWithSubcommands {
+  const dispatchAcpSubcommand = async (options: {
+    interaction: CommandInteraction;
+    prompt: string;
+    preferFollowUp?: boolean;
+  }) =>
+    await dispatchDiscordCommandInteraction({
+      interaction: options.interaction,
+      prompt: options.prompt,
+      command: params.commandDefinition,
+      cfg: params.cfg,
+      discordConfig: params.discordConfig,
+      accountId: params.accountId,
+      sessionPrefix: params.sessionPrefix,
+      preferFollowUp: options.preferFollowUp ?? false,
+      threadBindings: params.threadBindings,
+    });
+
+  const readString = (interaction: CommandInteraction, name: string) =>
+    interaction.options.getString(name)?.trim() || undefined;
+  const readNumber = (interaction: CommandInteraction, name: string) => {
+    const value = interaction.options.getNumber(name);
+    return typeof value === "number" && Number.isFinite(value) ? String(value) : undefined;
+  };
+
+  class SpawnCommand extends Command {
+    name = "spawn";
+    description = "Start or bind an ACP session";
+    defer = true;
+    ephemeral = params.ephemeralDefault;
+    options: CommandOptions = [
+      {
+        name: "agent",
+        description: "Harness id, for example codex",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+      {
+        name: "mode",
+        description: "Session mode override",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+        choices: [
+          { name: "persistent", value: "persistent" },
+          { name: "oneshot", value: "oneshot" },
+        ],
+      },
+      {
+        name: "thread",
+        description: "Thread binding mode",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+        choices: [
+          { name: "auto", value: "auto" },
+          { name: "here", value: "here" },
+          { name: "off", value: "off" },
+        ],
+      },
+      {
+        name: "bind",
+        description: "Bind this conversation immediately",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+        choices: [
+          { name: "here", value: "here" },
+          { name: "off", value: "off" },
+        ],
+      },
+      {
+        name: "cwd",
+        description: "Working directory",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+      {
+        name: "label",
+        description: "Optional session label",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+    ];
+
+    async run(interaction: CommandInteraction) {
+      const parts: string[] = [];
+      appendPromptToken(parts, readString(interaction, "agent"));
+      appendPromptFlag(parts, "--mode", readString(interaction, "mode"));
+      appendPromptFlag(parts, "--thread", readString(interaction, "thread"));
+      appendPromptFlag(parts, "--bind", readString(interaction, "bind"));
+      appendPromptFlag(parts, "--cwd", readString(interaction, "cwd"));
+      appendPromptFlag(parts, "--label", readString(interaction, "label"));
+      await dispatchAcpSubcommand({
+        interaction,
+        prompt: buildAcpPrompt("spawn", parts),
+      });
+    }
+  }
+
+  const createSingleValueSubcommand = (options: {
+    name: string;
+    description: string;
+    valueArgName: string;
+    valueDescription: string;
+    valueChoices?: Array<{ name: string; value: string }>;
+    valueType?: ApplicationCommandOptionType.String | ApplicationCommandOptionType.Number;
+  }) =>
+    new (class extends Command {
+      name = options.name;
+      description = options.description;
+      defer = true;
+      ephemeral = params.ephemeralDefault;
+      options: CommandOptions =
+        options.valueType === ApplicationCommandOptionType.Number
+          ? [
+              {
+                name: options.valueArgName,
+                description: options.valueDescription,
+                type: ApplicationCommandOptionType.Number,
+                required: true,
+              },
+              {
+                name: "session",
+                description: "Optional session key, id, or label",
+                type: ApplicationCommandOptionType.String,
+                required: false,
+              },
+            ]
+          : [
+              {
+                name: options.valueArgName,
+                description: options.valueDescription,
+                type: ApplicationCommandOptionType.String,
+                required: true,
+                ...(options.valueChoices ? { choices: options.valueChoices } : {}),
+              },
+              {
+                name: "session",
+                description: "Optional session key, id, or label",
+                type: ApplicationCommandOptionType.String,
+                required: false,
+              },
+            ];
+
+      async run(interaction: CommandInteraction) {
+        const value =
+          options.valueType === ApplicationCommandOptionType.Number
+            ? readNumber(interaction, options.valueArgName)
+            : readString(interaction, options.valueArgName);
+        const session = readString(interaction, "session");
+        await dispatchAcpSubcommand({
+          interaction,
+          prompt: buildAcpPrompt(options.name, [value, session].filter(Boolean) as string[]),
+        });
+      }
+    })();
+
+  class SteerCommand extends Command {
+    name = "steer";
+    description = "Send guidance into a running ACP session";
+    defer = true;
+    ephemeral = params.ephemeralDefault;
+    options: CommandOptions = [
+      {
+        name: "instruction",
+        description: "Steering instruction",
+        type: ApplicationCommandOptionType.String,
+        required: true,
+      },
+      {
+        name: "session",
+        description: "Optional session key, id, or label",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+    ];
+
+    async run(interaction: CommandInteraction) {
+      const parts: string[] = [];
+      appendPromptFlag(parts, "--session", readString(interaction, "session"));
+      appendPromptToken(parts, readString(interaction, "instruction"));
+      await dispatchAcpSubcommand({
+        interaction,
+        prompt: buildAcpPrompt("steer", parts),
+      });
+    }
+  }
+
+  class SetCommand extends Command {
+    name = "set";
+    description = "Set an ACP runtime config key";
+    defer = true;
+    ephemeral = params.ephemeralDefault;
+    options: CommandOptions = [
+      {
+        name: "key",
+        description: "Config key",
+        type: ApplicationCommandOptionType.String,
+        required: true,
+      },
+      {
+        name: "value",
+        description: "Config value",
+        type: ApplicationCommandOptionType.String,
+        required: true,
+      },
+      {
+        name: "session",
+        description: "Optional session key, id, or label",
+        type: ApplicationCommandOptionType.String,
+        required: false,
+      },
+    ];
+
+    async run(interaction: CommandInteraction) {
+      await dispatchAcpSubcommand({
+        interaction,
+        prompt: buildAcpPrompt(
+          "set",
+          [
+            readString(interaction, "key"),
+            readString(interaction, "value"),
+            readString(interaction, "session"),
+          ].filter(Boolean) as string[],
+        ),
+      });
+    }
+  }
+
+  const createSessionOnlySubcommand = (options: { name: string; description: string }) =>
+    new (class extends Command {
+      name = options.name;
+      description = options.description;
+      defer = true;
+      ephemeral = params.ephemeralDefault;
+      options: CommandOptions = [
+        {
+          name: "session",
+          description: "Optional session key, id, or label",
+          type: ApplicationCommandOptionType.String,
+          required: false,
+        },
+      ];
+
+      async run(interaction: CommandInteraction) {
+        await dispatchAcpSubcommand({
+          interaction,
+          prompt: buildAcpPrompt(
+            options.name,
+            [readString(interaction, "session")].filter(Boolean) as string[],
+          ),
+        });
+      }
+    })();
+
+  const createBareSubcommand = (options: { name: string; description: string }) =>
+    new (class extends Command {
+      name = options.name;
+      description = options.description;
+      defer = true;
+      ephemeral = params.ephemeralDefault;
+
+      async run(interaction: CommandInteraction) {
+        await dispatchAcpSubcommand({
+          interaction,
+          prompt: buildAcpPrompt(options.name),
+        });
+      }
+    })();
+
+  return new (class extends CommandWithSubcommands {
+    name = "acp";
+    description = truncateDiscordCommandDescription({
+      value: params.commandDefinition.description,
+      label: "command:acp",
+    });
+    subcommands = [
+      new SpawnCommand(),
+      createSessionOnlySubcommand({
+        name: "cancel",
+        description: "Cancel the target ACP session",
+      }),
+      new SteerCommand(),
+      createSessionOnlySubcommand({
+        name: "close",
+        description: "Close the target ACP session",
+      }),
+      createBareSubcommand({
+        name: "sessions",
+        description: "List active ACP sessions",
+      }),
+      createSessionOnlySubcommand({
+        name: "status",
+        description: "Show ACP session status",
+      }),
+      createSingleValueSubcommand({
+        name: "set-mode",
+        description: "Set ACP runtime mode",
+        valueArgName: "mode",
+        valueDescription: "Runtime mode value",
+      }),
+      new SetCommand(),
+      createSingleValueSubcommand({
+        name: "cwd",
+        description: "Set ACP working directory",
+        valueArgName: "path",
+        valueDescription: "Absolute working directory path",
+      }),
+      createSingleValueSubcommand({
+        name: "permissions",
+        description: "Set ACP permission profile",
+        valueArgName: "profile",
+        valueDescription: "Permission profile",
+        valueChoices: ACP_PERMISSION_PROFILES.map((value) => ({ name: value, value })),
+      }),
+      createSingleValueSubcommand({
+        name: "timeout",
+        description: "Set ACP timeout in seconds",
+        valueArgName: "seconds",
+        valueDescription: "Timeout in seconds",
+        valueType: ApplicationCommandOptionType.Number,
+      }),
+      createSingleValueSubcommand({
+        name: "model",
+        description: "Set ACP runtime model",
+        valueArgName: "model",
+        valueDescription: "Model id override",
+      }),
+      createSessionOnlySubcommand({
+        name: "reset-options",
+        description: "Reset ACP runtime overrides",
+      }),
+      createBareSubcommand({
+        name: "doctor",
+        description: "Run ACP diagnostics",
+      }),
+      createBareSubcommand({
+        name: "install",
+        description: "Show ACP install guidance",
+      }),
+      createBareSubcommand({
+        name: "help",
+        description: "Show ACP command help",
+      }),
+    ];
+  })();
 }
 
 function shouldBypassConfiguredAcpEnsure(commandName: string): boolean {
@@ -577,7 +955,7 @@ export function createDiscordNativeCommand(params: {
   sessionPrefix: string;
   ephemeralDefault: boolean;
   threadBindings: ThreadBindingManager;
-}): Command {
+}): DiscordExecutableCommand {
   const {
     command,
     cfg,
@@ -599,6 +977,17 @@ export function createDiscordNativeCommand(params: {
       argsParsing: "none",
       scope: "native",
     } satisfies ChatCommandDefinition);
+  if (command.name === "acp") {
+    return createDiscordAcpNativeCommand({
+      commandDefinition,
+      cfg,
+      discordConfig,
+      accountId,
+      sessionPrefix,
+      ephemeralDefault,
+      threadBindings,
+    });
+  }
   const argDefinitions = commandDefinition.args ?? command.args;
   const commandOptions = buildDiscordCommandOptions({
     command: commandDefinition,

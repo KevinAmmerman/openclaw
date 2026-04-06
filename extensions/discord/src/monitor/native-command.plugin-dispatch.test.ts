@@ -1,3 +1,4 @@
+import type { Command, CommandWithSubcommands } from "@buape/carbon";
 import { ChannelType } from "discord-api-types/v10";
 import type { NativeCommandSpec } from "openclaw/plugin-sdk/command-auth";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
@@ -288,6 +289,19 @@ async function createStatusCommand(cfg: OpenClawConfig) {
   });
 }
 
+function requireSubcommand(
+  command: ReturnType<typeof import("./native-command.js").createDiscordNativeCommand>,
+  name: string,
+): Command {
+  const subcommands =
+    "subcommands" in command ? (command as CommandWithSubcommands).subcommands : [];
+  const subcommand = subcommands.find((entry) => entry.name === name);
+  if (!subcommand) {
+    throw new Error(`missing subcommand: ${name}`);
+  }
+  return subcommand;
+}
+
 function createDispatchSpy() {
   return runtimeModuleMocks.dispatchReplyWithDispatcher.mockResolvedValue({
     counts: {
@@ -399,6 +413,35 @@ describe("Discord native plugin command dispatch", () => {
       commandName: "pairdiscord",
       interaction,
     });
+  });
+
+  it("builds ACP permissions prompts from Discord subcommands", async () => {
+    const cfg = createConfig();
+    const interaction = createInteraction();
+    const dispatchSpy = createDispatchSpy();
+    const command = await createNativeCommand(cfg, {
+      name: "acp",
+      description: "ACP",
+      acceptsArgs: true,
+    });
+    const permissions = requireSubcommand(command, "permissions");
+
+    await permissions.run(
+      Object.assign(interaction, {
+        options: {
+          getString: (name: string) =>
+            name === "profile" ? "approve-all" : name === "session" ? "session-123" : null,
+          getNumber: () => null,
+          getBoolean: () => null,
+        },
+      }) as never,
+    );
+
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    const dispatchCall = dispatchSpy.mock.calls[0]?.[0] as {
+      ctx?: { CommandBody?: string };
+    };
+    expect(dispatchCall.ctx?.CommandBody).toBe("/acp permissions approve-all session-123");
   });
 
   it("blocks unauthorized Discord senders before requireAuth:false plugin commands execute", async () => {

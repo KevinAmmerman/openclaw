@@ -1,3 +1,4 @@
+import type { Command, CommandWithSubcommands } from "@buape/carbon";
 import { ChannelType } from "discord-api-types/v10";
 import type { OpenClawConfig, loadConfig } from "openclaw/plugin-sdk/config-runtime";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -68,26 +69,35 @@ function createNativeCommand(
   });
 }
 
-type CommandOption = NonNullable<
-  ReturnType<typeof import("./native-command.js").createDiscordNativeCommand>["options"]
->[number];
+type DiscordExecutableCommand = ReturnType<
+  typeof import("./native-command.js").createDiscordNativeCommand
+>;
+type CommandWithOptions = Command & { options: NonNullable<Command["options"]> };
+type CommandOption = NonNullable<Command["options"]>[number];
 
-function findOption(
-  command: ReturnType<typeof import("./native-command.js").createDiscordNativeCommand>,
-  name: string,
-): CommandOption | undefined {
+function findOption(command: CommandWithOptions, name: string): CommandOption | undefined {
   return command.options?.find((entry) => entry.name === name);
 }
 
-function requireOption(
-  command: ReturnType<typeof import("./native-command.js").createDiscordNativeCommand>,
-  name: string,
-): CommandOption {
+function requireOption(command: CommandWithOptions, name: string): CommandOption {
   const option = findOption(command, name);
   if (!option) {
     throw new Error(`missing command option: ${name}`);
   }
   return option;
+}
+
+function requireSubcommand(command: DiscordExecutableCommand, name: string): Command {
+  const subcommands = "subcommands" in command ? command.subcommands : undefined;
+  const subcommand = subcommands?.find((entry) => entry.name === name);
+  if (!subcommand) {
+    throw new Error(`missing subcommand: ${name}`);
+  }
+  return subcommand;
+}
+
+function asCommandWithOptions(command: Command): CommandWithOptions {
+  return command as CommandWithOptions;
 }
 
 function readAutocomplete(option: CommandOption | undefined): unknown {
@@ -117,44 +127,32 @@ describe("createDiscordNativeCommand option wiring", () => {
     loggerWarnMock.mockReset();
   });
 
-  it("uses autocomplete for /acp action so inline action values are accepted", async () => {
+  it("registers Discord ACP subcommands with structured options", () => {
     const command = createNativeCommand("acp");
-    const action = requireOption(command, "action");
-    const autocomplete = readAutocomplete(action);
-    if (typeof autocomplete !== "function") {
-      throw new Error("acp action option did not wire autocomplete");
+    if (!("subcommands" in command)) {
+      throw new Error("acp command did not register Discord subcommands");
     }
-    const respond = vi.fn(async (_choices: unknown[]) => undefined);
+    expect(command.subcommands.map((entry) => entry.name)).toEqual(
+      expect.arrayContaining(["permissions", "set-mode", "spawn", "status", "sessions"]),
+    );
 
-    expect(readChoices(action)).toBeUndefined();
-    await autocomplete({
-      user: {
-        id: "owner",
-        username: "tester",
-        globalName: "Tester",
-      },
-      channel: {
-        type: ChannelType.DM,
-        id: "dm-1",
-      },
-      guild: undefined,
-      rawData: {},
-      options: {
-        getFocused: () => ({ value: "st" }),
-      },
-      respond,
-      client: {},
-    } as never);
-    expect(respond).toHaveBeenCalledWith([
-      { name: "steer", value: "steer" },
-      { name: "status", value: "status" },
-      { name: "install", value: "install" },
+    const permissions = requireSubcommand(command, "permissions");
+    expect(readChoices(requireOption(asCommandWithOptions(permissions), "profile"))).toEqual([
+      { name: "approve-all", value: "approve-all" },
+      { name: "approve-reads", value: "approve-reads" },
+      { name: "deny-all", value: "deny-all" },
+    ]);
+
+    const spawn = requireSubcommand(command, "spawn");
+    expect(readChoices(requireOption(asCommandWithOptions(spawn), "mode"))).toEqual([
+      { name: "persistent", value: "persistent" },
+      { name: "oneshot", value: "oneshot" },
     ]);
   });
 
   it("keeps static choices for non-acp string action arguments", () => {
     const command = createNativeCommand("voice");
-    const action = requireOption(command, "action");
+    const action = requireOption(asCommandWithOptions(command as Command), "action");
     const choices = readChoices(action);
 
     expect(readAutocomplete(action)).toBeUndefined();
@@ -175,7 +173,7 @@ describe("createDiscordNativeCommand option wiring", () => {
         },
       } as ReturnType<typeof loadConfig>,
     });
-    const level = requireOption(command, "level");
+    const level = requireOption(asCommandWithOptions(command as Command), "level");
     const autocomplete = readAutocomplete(level);
     if (typeof autocomplete !== "function") {
       throw new Error("think level option did not wire autocomplete");
@@ -228,7 +226,7 @@ describe("createDiscordNativeCommand option wiring", () => {
       } as ReturnType<typeof loadConfig>,
       discordConfig,
     });
-    const level = requireOption(command, "level");
+    const level = requireOption(asCommandWithOptions(command as Command), "level");
     const autocomplete = readAutocomplete(level);
     if (typeof autocomplete !== "function") {
       throw new Error("think level option did not wire autocomplete");
@@ -288,7 +286,11 @@ describe("createDiscordNativeCommand option wiring", () => {
 
     expect(command.description).toHaveLength(100);
     expect(command.description).toBe("x".repeat(100));
-    expect(requireOption(command, "input").description).toHaveLength(100);
-    expect(requireOption(command, "input").description).toBe("x".repeat(100));
+    expect(
+      requireOption(asCommandWithOptions(command as Command), "input").description,
+    ).toHaveLength(100);
+    expect(requireOption(asCommandWithOptions(command as Command), "input").description).toBe(
+      "x".repeat(100),
+    );
   });
 });
