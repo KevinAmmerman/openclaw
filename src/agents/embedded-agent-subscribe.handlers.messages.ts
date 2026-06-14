@@ -46,6 +46,16 @@ function shouldSuppressAssistantVisibleOutput(message: AgentMessage | undefined)
   return resolveAssistantMessagePhase(message) === "commentary";
 }
 
+function isTerminalOnlyNonTerminalMessage(
+  ctx: EmbeddedAgentSubscribeContext,
+  message: AgentMessage | undefined,
+): boolean {
+  if (!ctx.params.terminalOnlyAssistantTextDelivery) {
+    return false;
+  }
+  return (message as { stopReason?: unknown } | undefined)?.stopReason !== "stop";
+}
+
 function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage | undefined): boolean {
   if (!message || message.role !== "assistant") {
     return false;
@@ -656,6 +666,12 @@ export function handleMessageUpdate(
     content,
   });
 
+  // Stream updates do not reliably carry the eventual stop reason. Keep them
+  // internal and release only the completed terminal message from message_end.
+  if (ctx.params.terminalOnlyAssistantTextDelivery) {
+    return;
+  }
+
   const chunk = resolveAssistantTextChunk({
     evtType,
     delta,
@@ -912,6 +928,9 @@ export function handleMessageEnd(
   ctx.recordAssistantUsage((assistantMessage as { usage?: unknown }).usage);
   ctx.commitAssistantUsage();
   if (suppressVisibleAssistantOutput) {
+    return;
+  }
+  if (isTerminalOnlyNonTerminalMessage(ctx, assistantMessage)) {
     return;
   }
   promoteThinkingTagsToBlocks(assistantMessage);

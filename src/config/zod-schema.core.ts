@@ -237,6 +237,7 @@ const ModelCompatSchema = z
     toolCallArgumentsEncoding: z.string().optional(),
     requiresMistralToolIds: z.boolean().optional(),
     requiresOpenAiAnthropicToolPayload: z.boolean().optional(),
+    assistantTextDelivery: z.enum(["live", "terminal_only"]).optional(),
   })
   .strict()
   .optional();

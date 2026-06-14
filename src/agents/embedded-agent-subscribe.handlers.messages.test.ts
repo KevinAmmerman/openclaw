@@ -657,7 +657,9 @@ describe("handleMessageUpdate text signatures", () => {
       },
     } as never);
 
-    expect(flushBlockReplyBuffer).toHaveBeenCalledWith({ assistantMessageIndex: 7 });
+    expect(flushBlockReplyBuffer).toHaveBeenCalledWith({
+      assistantMessageIndex: 7,
+    });
     expect(resetAssistantMessageState).toHaveBeenCalledWith(0);
     expect(onAssistantMessageStart).toHaveBeenCalledTimes(1);
     expect(context.state.lastAssistantStreamItemId).toBe("item-2");
@@ -839,11 +841,19 @@ describe("handleMessageUpdate commentary phase", () => {
 
     handleMessageUpdate(
       ctx,
-      createTextUpdateEvent({ type: "text_delta", text: "Need send.", messagePhase: "commentary" }),
+      createTextUpdateEvent({
+        type: "text_delta",
+        text: "Need send.",
+        messagePhase: "commentary",
+      }),
     );
     handleMessageUpdate(
       ctx,
-      createTextUpdateEvent({ type: "text_end", text: "Need send.", messagePhase: "commentary" }),
+      createTextUpdateEvent({
+        type: "text_end",
+        text: "Need send.",
+        messagePhase: "commentary",
+      }),
     );
 
     await Promise.resolve();
@@ -974,7 +984,12 @@ describe("handleMessageEnd", () => {
         role: "assistant",
         provider: "ollama",
         model: "qwen-local",
-        content: [{ type: "text", text: '{"name":"read","arguments":{"path":"README.md"}}' }],
+        content: [
+          {
+            type: "text",
+            text: '{"name":"read","arguments":{"path":"README.md"}}',
+          },
+        ],
         stopReason: "stop",
       },
     } as never);
@@ -1275,5 +1290,176 @@ describe("handleMessageEnd", () => {
     expect(event?.data?.text).toBe("Done.");
     expect(event?.data?.delta).toBe("");
     expect(event?.data?.replace).toBe(true);
+  });
+
+  it("suppresses toolUse-turn text delivery under terminal_only policy", () => {
+    const onAgentEvent = vi.fn();
+    const emitBlockReply = vi.fn();
+    const finalizeAssistantTexts = vi.fn();
+    const ctx = createMessageEndContext({
+      onAgentEvent,
+      emitBlockReply,
+      finalizeAssistantTexts,
+      state: {
+        deltaBuffer: "",
+        blockBuffer: "",
+      },
+    });
+    ctx.params.terminalOnlyAssistantTextDelivery = true;
+
+    void handleMessageEnd(ctx, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Lass mich das nachschlagen.",
+          },
+        ],
+        stopReason: "toolUse",
+        usage: { input: 10, output: 5, total: 15 },
+      },
+    } as never);
+
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(emitBlockReply).not.toHaveBeenCalled();
+    expect(finalizeAssistantTexts).not.toHaveBeenCalled();
+  });
+
+  it("delivers terminal stop text normally under terminal_only policy", () => {
+    const onAgentEvent = vi.fn();
+    const emitBlockReply = vi.fn();
+    const finalizeAssistantTexts = vi.fn();
+    const consumeReplyDirectives = vi.fn((text: string) => ({ text }));
+    const ctx = createMessageEndContext({
+      onAgentEvent,
+      emitBlockReply,
+      finalizeAssistantTexts,
+      consumeReplyDirectives,
+      state: {
+        deltaBuffer: "",
+        blockBuffer: "",
+      },
+    });
+    ctx.params.terminalOnlyAssistantTextDelivery = true;
+
+    void handleMessageEnd(ctx, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "Erledigt, ich erinnere dich morgen um 09:00.",
+          },
+        ],
+        stopReason: "stop",
+        usage: { input: 10, output: 5, total: 15 },
+      },
+    } as never);
+
+    expect(finalizeAssistantTexts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Erledigt, ich erinnere dich morgen um 09:00.",
+      }),
+    );
+    expect(emitBlockReply).toHaveBeenCalled();
+  });
+
+  it("suppresses toolUse-turn text from partial delivery under terminal_only policy", () => {
+    const onAgentEvent = vi.fn();
+    const onPartialReply = vi.fn();
+    const ctx = createMessageUpdateContext({
+      onAgentEvent,
+      onPartialReply,
+      shouldEmitPartialReplies: true,
+    });
+    ctx.params.terminalOnlyAssistantTextDelivery = true;
+
+    handleMessageUpdate(
+      ctx,
+      createTextUpdateEvent({
+        type: "text_delta",
+        text: "Lass mich das nachschlagen.",
+        partial: {
+          role: "assistant",
+          content: [
+            createOpenAiResponsesTextBlock({
+              text: "Lass mich das nachschlagen.",
+              id: "item_tooluse",
+            }),
+          ],
+          api: "openai-responses",
+          provider: "openai",
+          model: "gpt-5.2",
+          usage: {},
+          timestamp: 0,
+        },
+      }),
+    );
+
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(onPartialReply).not.toHaveBeenCalled();
+  });
+
+  it("suppresses non-terminal message_end text when stopReason is not available", () => {
+    const onAgentEvent = vi.fn();
+    const emitBlockReply = vi.fn();
+    const finalizeAssistantTexts = vi.fn();
+    const ctx = createMessageEndContext({
+      onAgentEvent,
+      emitBlockReply,
+      finalizeAssistantTexts,
+    });
+    ctx.params.terminalOnlyAssistantTextDelivery = true;
+
+    void handleMessageEnd(ctx, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Still working." }],
+        usage: { input: 1, output: 1, total: 2 },
+      },
+    } as never);
+
+    expect(onAgentEvent).not.toHaveBeenCalled();
+    expect(emitBlockReply).not.toHaveBeenCalled();
+    expect(finalizeAssistantTexts).not.toHaveBeenCalled();
+  });
+
+  it("treats German and English pre-tool sentences identically under terminal_only policy", () => {
+    const onAgentEventEn = vi.fn();
+    const onAgentEventDe = vi.fn();
+
+    // English pre-tool text with toolUse
+    const ctxEn = createMessageEndContext({ onAgentEvent: onAgentEventEn });
+    ctxEn.params.terminalOnlyAssistantTextDelivery = true;
+    void handleMessageEnd(ctxEn, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Let me check that for you." }],
+        stopReason: "toolUse",
+        usage: { input: 1, output: 1, total: 2 },
+      },
+    } as never);
+
+    // German pre-tool text with toolUse
+    const ctxDe = createMessageEndContext({ onAgentEvent: onAgentEventDe });
+    ctxDe.params.terminalOnlyAssistantTextDelivery = true;
+    void handleMessageEnd(ctxDe, {
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Lass mich das nachschlagen." }],
+        stopReason: "toolUse",
+        usage: { input: 1, output: 1, total: 2 },
+      },
+    } as never);
+
+    // Both must be suppressed — content-independent
+    expect(onAgentEventEn).not.toHaveBeenCalled();
+    expect(onAgentEventDe).not.toHaveBeenCalled();
   });
 });

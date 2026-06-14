@@ -53,6 +53,7 @@ import {
 } from "../../../plugins/provider-hook-runtime.js";
 import {
   extractModelCompat,
+  resolveAssistantTextDelivery,
   resolveToolCallArgumentsEncoding,
 } from "../../../plugins/provider-model-compat.js";
 import {
@@ -3462,6 +3463,8 @@ export async function runEmbeddedAttempt(
           agentId: sessionAgentId,
           builtinToolNames,
           internalEvents: params.internalEvents,
+          terminalOnlyAssistantTextDelivery:
+            resolveAssistantTextDelivery(params.model) === "terminal_only",
         }),
       );
 
@@ -5417,6 +5420,8 @@ export async function runEmbeddedAttempt(
         contextBudgetStatus,
         compactionCount: getCompactionCount(),
         compactionTokensAfter: getLastCompactionTokensAfter(),
+        terminalOnlyAssistantTextDelivery:
+          resolveAssistantTextDelivery(params.model) === "terminal_only",
         // Client tool calls detected (OpenResponses hosted tools).
         // Stay `undefined` (not `[]`) when none were detected so downstream
         // truthiness predicates keep working without a `.length` check.

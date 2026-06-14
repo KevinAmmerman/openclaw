@@ -17,6 +17,18 @@ export function extractModelCompat(
   return modelOrCompat as ModelCompatConfig;
 }
 
+export function resolveAssistantTextDelivery(
+  model: Pick<Model, "provider" | "id" | "compat">,
+): NonNullable<ModelCompatConfig["assistantTextDelivery"]> {
+  const configured = extractModelCompat(model)?.assistantTextDelivery;
+  if (configured) {
+    return configured;
+  }
+  const provider = model.provider.trim().toLowerCase();
+  const modelId = model.id.trim().toLowerCase();
+  return provider === "zai" && modelId === "glm-5.2" ? "terminal_only" : "live";
+}
+
 /** @deprecated Provider-owned model compat helper; do not use from third-party plugins. */
 export function applyModelCompatPatch<T extends { compat?: ModelCompatConfig }>(
   model: T,

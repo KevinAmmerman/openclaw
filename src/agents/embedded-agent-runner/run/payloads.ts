@@ -250,6 +250,7 @@ export function buildEmbeddedRunPayloads(params: {
   runAborted?: boolean;
   didSendDeterministicApprovalPrompt?: boolean;
   heartbeatToolResponse?: HeartbeatToolResponse;
+  terminalOnlyAssistantTextDelivery?: boolean;
 }): ReplyPayload[] {
   if (params.heartbeatToolResponse) {
     return [createHeartbeatToolResponsePayload(params.heartbeatToolResponse)];
@@ -322,8 +323,12 @@ export function buildEmbeddedRunPayloads(params: {
     deliveredSourceReplyViaMessageTool;
   const nonEmptyAssistantTexts = params.assistantTexts.filter((text) => text.trim().length > 0);
   const currentAssistant = params.currentAssistant ?? undefined;
-  const assistantForPayload =
-    currentAssistant ?? (nonEmptyAssistantTexts.length === 1 ? undefined : params.lastAssistant);
+  const assistantForPayload = params.terminalOnlyAssistantTextDelivery
+    ? params.lastAssistant
+    : (currentAssistant ??
+      (nonEmptyAssistantTexts.length === 1 ? undefined : params.lastAssistant));
+  const hasTerminalAnswer =
+    !params.terminalOnlyAssistantTextDelivery || assistantForPayload?.stopReason === "stop";
   const lastAssistantStopReason = assistantForPayload?.stopReason;
   const lastAssistantErrored = lastAssistantStopReason === "error";
   const lastAssistantAborted = lastAssistantStopReason === "aborted";
@@ -403,10 +408,13 @@ export function buildEmbeddedRunPayloads(params: {
     replyItems.push({ text: reasoningText, isReasoning: true });
   }
 
-  const fallbackAnswerText = assistantForPayload
-    ? extractAssistantVisibleText(assistantForPayload)
+  const fallbackAnswerText =
+    assistantForPayload && hasTerminalAnswer
+      ? extractAssistantVisibleText(assistantForPayload)
+      : "";
+  const fallbackRawAnswerText = hasTerminalAnswer
+    ? resolveRawAssistantAnswerText(assistantForPayload)
     : "";
-  const fallbackRawAnswerText = resolveRawAssistantAnswerText(assistantForPayload);
   const shouldSuppressRawErrorText = (text: string) => {
     if (!lastAssistantNeedsErrorSurface) {
       return false;
@@ -466,11 +474,16 @@ export function buildEmbeddedRunPayloads(params: {
     const parsed = parseReplyDirectives(text);
     return (parsed.mediaUrls?.length ?? 0) > 0 || parsed.audioAsVoice;
   });
-  const normalizedAssistantTexts = normalizeTextForComparison(nonEmptyAssistantTexts.join("\n\n"));
+  const deliverableAssistantTexts = params.terminalOnlyAssistantTextDelivery
+    ? []
+    : nonEmptyAssistantTexts;
+  const normalizedAssistantTexts = normalizeTextForComparison(
+    deliverableAssistantTexts.join("\n\n"),
+  );
   const normalizedRawAnswerText = normalizeTextForComparison(rawAnswerDirectiveState?.text ?? "");
   const shouldPreferRawAnswerText =
     rawAnswerHasMedia &&
-    (!nonEmptyAssistantTexts.length ||
+    (!deliverableAssistantTexts.length ||
       (!assistantTextsHaveMedia &&
         normalizedAssistantTexts.length > 0 &&
         normalizedAssistantTexts === normalizedRawAnswerText));
@@ -485,7 +498,7 @@ export function buildEmbeddedRunPayloads(params: {
     !lastAssistantNeedsErrorSurface &&
     fallbackAnswerSourceText.length > 0 &&
     normalizedFallbackAnswerSourceText.length > 0;
-  const hasAssistantTextPayload = nonEmptyAssistantTexts.length > 0;
+  const hasAssistantTextPayload = deliverableAssistantTexts.length > 0;
   const answerTexts =
     suppressAssistantArtifacts || runAborted
       ? []
@@ -494,7 +507,7 @@ export function buildEmbeddedRunPayloads(params: {
           : shouldPreferRawAnswerText && fallbackRawAnswerText
             ? [fallbackRawAnswerText]
             : hasAssistantTextPayload
-              ? nonEmptyAssistantTexts
+              ? deliverableAssistantTexts
               : fallbackAnswerText
                 ? [fallbackAnswerText]
                 : []

@@ -194,6 +194,7 @@ export type EmbeddedRunAttemptResult = {
   contextBudgetStatus?: SessionContextBudgetStatus;
   compactionCount?: number;
   compactionTokensAfter?: number;
+  terminalOnlyAssistantTextDelivery?: boolean;
   /**
    * Client tool calls detected during this attempt (OpenResponses hosted
    * tools), in the order the underlying LLM emitted them. Field is

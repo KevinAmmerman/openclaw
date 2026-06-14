@@ -109,6 +109,7 @@ export type ModelCompatConfig = SupportedOpenAICompatFields &
     requiresMistralToolIds?: boolean;
     /** Whether OpenAI-style calls must be reshaped to Anthropic-compatible tool payloads. */
     requiresOpenAiAnthropicToolPayload?: boolean;
+    assistantTextDelivery?: "live" | "terminal_only";
   };
 
 export type ModelImageInputConfig = {

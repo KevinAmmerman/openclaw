@@ -725,3 +725,59 @@ describe("buildEmbeddedRunPayloads tool-error warnings", () => {
     expectSinglePayloadText(payloads, "THINKING-OFF-OK");
   });
 });
+
+describe("buildEmbeddedRunPayloads terminal_only policy", () => {
+  it("ignores accumulated assistantTexts and uses the terminal lastAssistant", () => {
+    const payloads = buildPayloads({
+      assistantTexts: ["Lass mich das nachschlagen.", "Ich schaue mal."],
+      lastAssistant: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Erledigt, alles klar." }],
+      } as AssistantMessage,
+      terminalOnlyAssistantTextDelivery: true,
+    });
+
+    expectSinglePayloadText(payloads, "Erledigt, alles klar.");
+  });
+
+  it("preserves live accumulated text when terminal_only is disabled", () => {
+    const payloads = buildPayloads({
+      assistantTexts: ["First text.", "Second text."],
+      lastAssistant: undefined,
+      terminalOnlyAssistantTextDelivery: false,
+    });
+
+    expect(payloads.map((payload) => payload.text)).toEqual(["First text.", "Second text."]);
+  });
+
+  it("preserves terminal media directives under terminal_only", () => {
+    const payloads = buildPayloads({
+      assistantTexts: ["Intermediate text."],
+      lastAssistant: {
+        role: "assistant",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Done.\nMEDIA:/tmp/reply.png" }],
+      } as AssistantMessage,
+      terminalOnlyAssistantTextDelivery: true,
+    });
+
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.text).toBe("Done.");
+    expect(payloads[0]?.mediaUrls).toEqual(["/tmp/reply.png"]);
+  });
+
+  it("does not fall back to a non-terminal lastAssistant under terminal_only", () => {
+    const payloads = buildPayloads({
+      assistantTexts: ["Intermediate text."],
+      lastAssistant: {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "text", text: "Let me inspect that." }],
+      } as AssistantMessage,
+      terminalOnlyAssistantTextDelivery: true,
+    });
+
+    expect(payloads).toEqual([]);
+  });
+});

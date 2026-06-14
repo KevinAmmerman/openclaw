@@ -103,6 +103,8 @@ export type SubscribeEmbeddedAgentSessionParams = {
    * Exact raw names of OpenClaw tools registered for this run.
    */
   builtinToolNames?: ReadonlySet<string>;
+  /** Suppress streamed and non-terminal assistant text from user-visible delivery. */
+  terminalOnlyAssistantTextDelivery?: boolean;
   /**
    * Exact raw names allowed to emit local media paths for this run.
    * Includes core trusted tools plus bundled plugin tools proven from the
